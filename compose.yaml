@@ -1,0 +1,82 @@
+services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    container_name: tailscale-syncplay
+    hostname: ${TS_HOSTNAME}
+    restart: unless-stopped
+
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_AUTH_ONCE: "true"
+      TS_USERSPACE: "true"
+      TS_ACCEPT_DNS: "true"
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS}
+      TS_SERVE_CONFIG: /config/serve-config.json
+
+      # Current releases auto-advertise service-host configs by default,
+      # but keeping this explicit avoids ambiguity.
+      TS_EXPERIMENTAL_SERVICE_AUTO_ADVERTISEMENT: "true"
+
+    volumes:
+      - ./tailscale/state:/var/lib/tailscale
+      - ./tailscale:/config
+
+    devices:
+      - /dev/net/tun:/dev/net/tun
+
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+    security_opt:
+      - no-new-privileges:true
+
+  syncplay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SYNCPLAY_VERSION: ${SYNCPLAY_VERSION}
+    image: syncplay-server:${SYNCPLAY_VERSION}
+    container_name: syncplay
+    restart: unless-stopped
+
+    depends_on:
+      - tailscale
+
+    # Share the Tailscale container's network namespace so
+    # 127.0.0.1:8999 in Serve points at this process.
+    network_mode: "service:tailscale"
+
+    environment:
+      SYNCPLAY_PORT: ${SYNCPLAY_PORT}
+      SYNCPLAY_INTERFACE_IPV4: 127.0.0.1
+
+      SYNCPLAY_PASSWORD: ${SYNCPLAY_PASSWORD}
+      SYNCPLAY_SALT: ${SYNCPLAY_SALT}
+
+      SYNCPLAY_ISOLATE_ROOM: ${SYNCPLAY_ISOLATE_ROOM}
+      SYNCPLAY_DISABLE_READY: ${SYNCPLAY_DISABLE_READY}
+      SYNCPLAY_DISABLE_CHAT: ${SYNCPLAY_DISABLE_CHAT}
+
+      # Optional
+      SYNCPLAY_MAX_CHAT_MESSAGE_LENGTH: ${SYNCPLAY_MAX_CHAT_MESSAGE_LENGTH}
+      SYNCPLAY_MAX_USERNAME_LENGTH: ${SYNCPLAY_MAX_USERNAME_LENGTH}
+      SYNCPLAY_MOTD_FILE: ${SYNCPLAY_MOTD_FILE}
+      SYNCPLAY_STATS_DB_FILE: ${SYNCPLAY_STATS_DB_FILE}
+      SYNCPLAY_TLS_PATH: ${SYNCPLAY_TLS_PATH}
+
+    volumes:
+      - ./data:/data:rw
+      # - ./certs:/certs:ro
+
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    security_opt:
+      - no-new-privileges:true
+
+    cap_drop:
+      - ALL

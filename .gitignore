@@ -1,0 +1,70 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local data and runtime state
+data/
+tailscale/state/
+*.sqlite
+*.sqlite3
+*.db
+
+# TLS or cert material
+certs/
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+
+# Logs and temp files
+*.log
+*.pid
+*.tmp
+*.swp
+*.swo
+*~
+.tmp/
+.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.python-version
+.venv/
+venv/
+env/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Coverage and test output
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker overrides
+compose.override.yaml
+docker-compose.override.yml
+
+# Optional local notes
+notes/
