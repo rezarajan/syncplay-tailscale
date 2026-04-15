@@ -39,6 +39,8 @@ jobs:
           tags: local/syncplay:test
           build-args: |
             SYNCPLAY_VERSION=${{ steps.version.outputs.value }}
+          cache-from: type=gha,scope=syncplay
+          cache-to: type=gha,mode=max,scope=syncplay
 
       - name: Smoke test image
         run: docker run --rm local/syncplay:test syncplay-server
