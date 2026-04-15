@@ -5,36 +5,94 @@ on:
   push:
     branches:
       - main
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      syncplay_version:
+        description: Optional Syncplay version override, for example 1.7.5
+        required: false
+        default: ""
+        type: string
+      image_tag:
+        description: Optional extra image tag, for example stable
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: syncplay-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  CACHE_SCOPE: syncplay
 
 jobs:
   validate:
+    name: Validate and smoke test
     runs-on: ubuntu-latest
+
+    outputs:
+      syncplay_version: ${{ steps.version.outputs.value }}
+      extra_tag: ${{ steps.version.outputs.extra_tag }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Read Syncplay version
+      - name: Resolve Syncplay version
         id: version
-        run: echo "value=$(tr -d '[:space:]' < .syncplay-version)" >> "$GITHUB_OUTPUT"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FILE_VERSION="$(tr -d '[:space:]' < .syncplay-version)"
+
+          VERSION="${FILE_VERSION}"
+          EXTRA_TAG=""
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.syncplay_version }}" ]]; then
+            VERSION="${{ inputs.syncplay_version }}"
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            RAW_TAG="${{ github.event.release.tag_name }}"
+            VERSION="${RAW_TAG#v}"
+            EXTRA_TAG="${VERSION}"
+          fi
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.image_tag }}" ]]; then
+            EXTRA_TAG="${{ inputs.image_tag }}"
+          fi
+
+          if [[ -z "${VERSION}" ]]; then
+            echo "Resolved Syncplay version is empty" >&2
+            exit 1
+          fi
+
+          echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "extra_tag=${EXTRA_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Prepare env file for Compose validation
+        shell: bash
         run: |
+          set -euo pipefail
           cp .env.example .env
-          sed -i "s/^SYNCPLAY_VERSION=.*/SYNCPLAY_VERSION=${{ steps.version.outputs.value }}/" .env
+          if grep -q '^SYNCPLAY_VERSION=' .env; then
+            sed -i "s/^SYNCPLAY_VERSION=.*/SYNCPLAY_VERSION=${{ steps.version.outputs.value }}/" .env
+          else
+            printf '\nSYNCPLAY_VERSION=%s\n' "${{ steps.version.outputs.value }}" >> .env
+          fi
 
       - name: Validate Compose config
         run: docker compose config
 
-      - name: Build Syncplay image
-        uses: docker/build-push-action@v6
+      - name: Build test image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           file: ./Dockerfile
@@ -43,20 +101,32 @@ jobs:
           tags: local/syncplay:test
           build-args: |
             SYNCPLAY_VERSION=${{ steps.version.outputs.value }}
-          cache-from: type=gha,scope=syncplay
-          cache-to: type=gha,mode=max,scope=syncplay
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.CACHE_SCOPE }}
 
-      - name: Smoke test image
+      - name: CLI sanity check
+        run: docker run --rm local/syncplay:test syncplay-server --help
+
+      - name: Runtime smoke test
+        shell: bash
         run: |
-          cid=$(docker run -d --rm \
+          set -euo pipefail
+
+          cid="$(docker run -d --rm \
             -e SYNCPLAY_PORT=8999 \
             -e SYNCPLAY_INTERFACE_IPV4=0.0.0.0 \
-            local/syncplay:test)
+            local/syncplay:test)"
+
+          cleanup() {
+            docker logs "$cid" || true
+            docker stop "$cid" || true
+          }
+          trap cleanup EXIT
 
           sleep 5
-          docker ps --filter "id=$cid" --filter "status=running"
-          docker logs "$cid"
-          docker stop "$cid"
+
+          test "$(docker inspect -f '{{.State.Running}}' "$cid")" = "true"
+
   publish:
     name: Build and publish GHCR image
     needs: validate
@@ -69,10 +139,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Log in to GHCR
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
@@ -83,12 +153,10 @@ jobs:
 
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=tag
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ needs.validate.outputs.syncplay_version }}
@@ -101,7 +169,7 @@ jobs:
             org.opencontainers.image.version=${{ needs.validate.outputs.syncplay_version }}
 
       - name: Build and push image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           file: ./Dockerfile
@@ -111,5 +179,5 @@ jobs:
             SYNCPLAY_VERSION=${{ needs.validate.outputs.syncplay_version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=syncplay
-          cache-to: type=gha,mode=max,scope=syncplay
+          cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=${{ env.CACHE_SCOPE }}
