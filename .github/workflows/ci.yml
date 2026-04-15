@@ -41,4 +41,4 @@ jobs:
             SYNCPLAY_VERSION=${{ steps.version.outputs.value }}
 
       - name: Smoke test image
-        run: docker run --rm local/syncplay:test python3 /usr/local/bin/syncplayServer.py --help
+        run: docker run --rm local/syncplay:test syncplay-server
