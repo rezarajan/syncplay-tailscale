@@ -55,8 +55,8 @@ jobs:
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.syncplay_version }}" ]]; then
             VERSION="${{ inputs.syncplay_version }}"
-          elif [[ "${{ github.event_name }}" == "release" ]]; then
-            RAW_TAG="${{ github.event.release.tag_name }}"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            RAW_TAG="${{ github.ref_name }}"
             VERSION="${RAW_TAG#v}"
             EXTRA_TAG="${VERSION}"
           fi
@@ -196,7 +196,7 @@ jobs:
     needs:
       - validate
       - publish
-    if: github.event_name == 'release'
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
 
     permissions:
@@ -207,6 +207,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Prepare release bundle
+        id: bundle
         shell: bash
         run: |
           set -euo pipefail
@@ -224,6 +225,8 @@ jobs:
           sed -i "s|^SYNCPLAY_IMAGE=.*|SYNCPLAY_IMAGE=${IMAGE}|" "${OUTDIR}/.env.example"
 
           tar -czf "${OUTDIR}.tar.gz" "${OUTDIR}"
+
+          echo "asset=${OUTDIR}.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Upload release asset
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
