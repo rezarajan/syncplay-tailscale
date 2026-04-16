@@ -137,6 +137,9 @@ jobs:
       contents: read
       packages: write
 
+    outputs:
+      image_ref: ${{ steps.image_ref.outputs.value }}
+
     steps:
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -168,6 +171,13 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ needs.validate.outputs.syncplay_version }}
 
+      - name: Record canonical image reference
+        id: image_ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "value=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate.outputs.syncplay_version }}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
@@ -181,3 +191,42 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ env.CACHE_SCOPE }}
           cache-to: type=gha,mode=max,scope=${{ env.CACHE_SCOPE }}
+
+  release_bundle:
+    name: Build and upload release bundle
+    needs:
+      - validate
+      - publish
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare release bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate.outputs.syncplay_version }}"
+          IMAGE="${{ needs.publish.outputs.image_ref }}"
+          OUTDIR="syncplay-tailscale-${VERSION}"
+
+          mkdir -p "${OUTDIR}/tailscale"
+
+          cp compose.yaml "${OUTDIR}/compose.yaml"
+          cp .env.example "${OUTDIR}/.env.example"
+          cp tailscale/serve-config.json "${OUTDIR}/tailscale/serve-config.json"
+
+          sed -i "s|^SYNCPLAY_IMAGE=.*|SYNCPLAY_IMAGE=${IMAGE}|" "${OUTDIR}/.env.example"
+
+          tar -czf "${OUTDIR}.tar.gz" "${OUTDIR}"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          files: ${{ steps.bundle.outputs.asset }}
